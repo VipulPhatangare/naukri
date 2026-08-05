@@ -374,10 +374,10 @@ async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10
 
             if unique_batch_jobs:
                 # Deduplication Check at Step A against MongoDB
-                existing_docs = list(db.jobs.find({"jobId": {"$in": [j['jobId'] for j in unique_batch_jobs]}, "isDeepScraped": True}, {"jobId": 1}))
+                existing_docs = list(db.jobs.find({"jobId": {"$in": [j['jobId'] for j in unique_batch_jobs]}}, {"jobId": 1}))
                 existing_job_ids = {d['jobId'] for d in existing_docs}
 
-                # Filter out already existing deep-scraped jobs
+                # Filter out already existing jobs
                 new_jobs_to_scrape = [j for j in unique_batch_jobs if j['jobId'] not in existing_job_ids]
 
                 print(f"  [Step A] Harvested {len(unique_batch_jobs)} Fresh Job Links ({len(existing_job_ids)} already in DB -> SKIPPED, {len(new_jobs_to_scrape)} NEW jobs to deep-scrape).", flush=True)
@@ -418,6 +418,8 @@ async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10
                             pass_num += 1
                 else:
                     print(f"  [OK] [Batch {batch_num} Skipped] All {len(unique_batch_jobs)} jobs in this batch already exist in MongoDB!", flush=True)
+            else:
+                print(f"  [OK] [Batch {batch_num}] No new job links harvested from pages {b_start}..{b_end}.", flush=True)
 
             total_in_db = db.jobs.count_documents({})
             print(f"  [OK] [Batch {batch_num} Verified] Total Unique Jobs in Database: {total_in_db}", flush=True)
