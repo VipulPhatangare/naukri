@@ -28,6 +28,7 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
   const [logs, setLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [modalMessage, setModalMessage] = useState(null);
 
   // Verify Admin Token on Mount
   useEffect(() => {
@@ -139,13 +140,14 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to start scraper');
+        setModalMessage({ title: 'Engine Error', text: data.error || 'Failed to start scraper process', type: 'error' });
       } else {
+        setModalMessage({ title: 'Scraper Launched', text: `Scraper engine started for ${timeRangeTextSelect} (Pages ${startPageInput}..${pagesInput})`, type: 'success' });
         fetchStats();
         fetchLogs();
       }
     } catch (e) {
-      alert('Error connecting to backend');
+      setModalMessage({ title: 'Connection Error', text: 'Error connecting to backend API', type: 'error' });
     }
   };
 
@@ -155,6 +157,7 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      setModalMessage({ title: 'Engine Stopped', text: 'Scraper engine manually stopped', type: 'info' });
       fetchStats();
       fetchLogs();
     } catch (e) {
@@ -170,11 +173,11 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
-      alert(data.message || 'Targeted deep scraping launched');
+      setModalMessage({ title: 'Targeted Deep Repair', text: data.message || 'Targeted deep scraping launched successfully!', type: 'success' });
       fetchStats();
       fetchLogs();
     } catch (e) {
-      alert('Error connecting to repair API');
+      setModalMessage({ title: 'Repair Error', text: 'Error connecting to repair API', type: 'error' });
     } finally {
       setRepairing(false);
     }
@@ -623,6 +626,52 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
           </table>
         </div>
       </div>
+
+      {/* MODERN GLASSMORPHIC MODAL POPUP FOR NOTIFICATIONS & CONFIRMATIONS */}
+      {modalMessage && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div className="glass-card" style={{
+            width: '90%',
+            maxWidth: '440px',
+            padding: '2rem',
+            borderRadius: '20px',
+            textAlign: 'center',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6)',
+            background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(11, 15, 25, 0.98))'
+          }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>
+              {modalMessage.type === 'error' ? '⚠️' : modalMessage.type === 'success' ? '✅' : '🔔'}
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff', marginBottom: '0.6rem' }}>
+              {modalMessage.title || 'System Notification'}
+            </h3>
+            <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '1.75rem' }}>
+              {modalMessage.text}
+            </p>
+            <button 
+              onClick={() => setModalMessage(null)}
+              className="btn-primary" 
+              style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
+            >
+              OK, Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
