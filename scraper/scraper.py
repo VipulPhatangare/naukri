@@ -266,17 +266,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                 await page_tab.close()
                 page_tab = None
 
-                # 1. DOM Job Description extraction
-                jd_container = soup_jd.find(['div', 'section'], class_=re.compile(r'styles_JDC__dang-inner-html|dang-inner-html|styles_job-desc|job-desc|styles_job-desc-container'))
-                if not jd_container:
-                    jd_container = soup_jd.find('section', class_=re.compile(r'job-desc-container|styles_job-header'))
-
-                if jd_container:
-                    extracted_dom = jd_container.get_text(separator="\n").strip()
-                    if len(extracted_dom) > len(desc_text):
-                        desc_text = extracted_dom
-
-                # 2. JSON-LD JobPosting extraction
+                # 1. JSON-LD JobPosting extraction (UNLIMITED full text)
                 jp_data = None
                 for js in soup_jd.find_all('script', type='application/ld+json'):
                     if js.string and 'JobPosting' in js.string:
@@ -333,7 +323,15 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                     if isinstance(qual_obj, dict):
                         education = qual_obj.get('educationalLevel', education)
 
-                if len(desc_text) > 100:
+                # 2. DOM Job Description extraction fallback
+                if len(desc_text) <= 50:
+                    jd_container = soup_jd.find(['div', 'section', 'article'], class_=re.compile(r'styles_JDC__dang-inner-html|dang-inner-html|styles_job-desc|job-desc|styles_job-desc-container|job-desc-container|styles_job-header'))
+                    if jd_container:
+                        extracted_dom = jd_container.get_text(separator="\n").strip()
+                        if len(extracted_dom) > len(desc_text):
+                            desc_text = extracted_dom
+
+                if len(desc_text) > 50:
                     break
             except Exception:
                 if page_tab:
@@ -341,8 +339,16 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                     except Exception: pass
                 await asyncio.sleep(0.5)
 
-        # Final Fallback to SRP text if DOM/JSON-LD unavailable
-        if len(desc_text) < 50:
+        # 3. Final Fallback to generic article/div container if specific tags missed
+        if len(desc_text) <= 50:
+            for container in soup_jd.find_all(['div', 'article', 'section']):
+                t = container.get_text(separator="\n").strip()
+                if len(t) > 200 and len(t) > len(desc_text):
+                    desc_text = t
+                    if len(desc_text) > 500:
+                        break
+
+        if len(desc_text) < 30:
             desc_text = job_item.get('description', f"Job opportunity for {full_title}.")
 
         job_doc = {
