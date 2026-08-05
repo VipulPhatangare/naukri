@@ -196,8 +196,13 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 resp = await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
+                try:
+                    await page_tab.wait_for_selector('.srp-jobtuple-wrapper, article, div.cust-job-tuple', timeout=7000)
+                except Exception:
+                    await page_tab.wait_for_timeout(3000)
+                    
                 await page_tab.evaluate("window.scrollTo(0, 1500)")
-                await page_tab.wait_for_timeout(2500)
+                await page_tab.wait_for_timeout(2000)
 
                 html = await page_tab.content()
                 status_code = resp.status if resp else 0
