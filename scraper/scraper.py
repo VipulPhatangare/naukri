@@ -342,9 +342,8 @@ async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            channel="chrome",
             headless=True,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+            args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
         )
         shared_context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",

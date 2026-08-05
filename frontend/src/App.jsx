@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { io } from 'socket.io-client';
 import { Database, Search, ShieldCheck } from 'lucide-react';
 import JobExplorer from './components/JobExplorer';
 import JobDetailModal from './components/JobDetailModal';
 import AdminDashboard from './components/AdminDashboard';
-
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3006' : window.location.origin);
 
 // Helper to load persistent state from URL query & localStorage
 const getInitialState = () => {
@@ -42,21 +39,21 @@ export default function App() {
   const [searchParams, setSearchParams] = useState(initialState.searchParams);
   const [selectedJob, setSelectedJob] = useState(null);
 
-  // Initialize Socket.io connection for real-time scraper progress updates
+  // Poll scraper status via REST API (No Socket.io)
   useEffect(() => {
-    const socket = io(SOCKET_URL);
-
-    socket.on('connect', () => {
-      console.log('[Socket.io] Connected to scraper backend');
-    });
-
-    socket.on('scraper_status', (data) => {
-      setScraperStatus(data);
-    });
-
-    return () => {
-      socket.disconnect();
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/scraper/status');
+        if (res.ok) {
+          const data = await res.json();
+          setScraperStatus(data);
+        }
+      } catch (e) {}
     };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchJobs = async (params = searchParams) => {

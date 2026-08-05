@@ -1,8 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const http = require('http');
-const { Server } = require('socket.io');
 const { spawn } = require('child_process');
 const path = require('path');
 const bcrypt = require('bcryptjs');
@@ -14,10 +12,6 @@ const User = require('./models/User');
 const ScraperLog = require('./models/ScraperLog');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
-});
 
 app.use(cors());
 app.use(express.json());
@@ -273,23 +267,6 @@ cron.schedule('30 1,10 * * *', async () => {
 });
 
 // Websocket Connection
-io.on('connection', (socket) => {
-  console.log('[Socket.io] Client connected:', socket.id);
-  socket.emit('scraper_status', scraperStatus);
-});
-
-// Periodic status broadcasting via WebSockets
-setInterval(async () => {
-  try {
-    const totalCount = await Job.countDocuments();
-    const statusPayload = {
-      ...scraperStatus,
-      totalScrapedJobs: totalCount
-    };
-    io.emit('scraper_status', statusPayload);
-  } catch (e) {}
-}, 2000);
-
 // --- REST API ENDPOINTS ---
 
 // 1. Admin Authentication Login Endpoint
@@ -676,6 +653,6 @@ app.get('/api/jobs/analytics', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`[Express Backend] Listening on http://localhost:${PORT}`);
 });
