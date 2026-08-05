@@ -264,10 +264,11 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                 try: await page_tab.close()
                 except Exception: pass
 
-        # 2. Secondary Strategy: Browser Playwright HTML Tab Navigation Fallback
+        # 2. Secondary Strategy: SEO Keyword Category URLs (Bypasses Akamai WAF 403)
         url_patterns = [
-            f"https://www.naukri.com/jobs-in-india-{p_num}?jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?jobAge={job_age}",
-            f"https://www.naukri.com/jobs-in-india-{p_num}" if p_num > 1 else "https://www.naukri.com/jobs-in-india"
+            f"https://www.naukri.com/it-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/it-jobs",
+            f"https://www.naukri.com/software-engineer-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/software-engineer-jobs",
+            f"https://www.naukri.com/full-stack-developer-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/full-stack-developer-jobs"
         ]
 
         for attempt in range(retries):
@@ -275,11 +276,14 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
             page_tab = None
             try:
                 page_tab = await shared_context.new_page()
-                await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+                await page_tab.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                """)
                 
                 resp = await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
                 await page_tab.evaluate("window.scrollTo(0, 1500)")
-                await page_tab.wait_for_timeout(2500)
+                await page_tab.wait_for_timeout(2000)
 
                 html = await page_tab.content()
                 final_url = page_tab.url
@@ -290,9 +294,12 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                 page_tab = None
 
                 if page_jobs:
-                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs via Tab Navigation", flush=True)
+                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs via SEO Category URL ({srp_url})", flush=True)
                     break
+                else:
+                    print(f"  [SRP Harvest Empty] Page {p_num}: Attempt {attempt+1} Status {status_code}, HTML Len {len(html)} bytes ({srp_url})", flush=True)
             except Exception as err:
+                print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:80]}", flush=True)
                 if page_tab:
                     try: await page_tab.close()
                     except Exception: pass
