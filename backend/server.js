@@ -149,13 +149,17 @@ async function launchScraperProcess({ jobAge = 2, startPage = 1, pages = 150, tr
     if (currentScraperLogId) {
       const endTime = new Date();
       const duration = Math.round((endTime.getTime() - logDoc.startTime.getTime()) / 1000);
+      const msg = addedCount > 0 
+        ? `Scraper finished cleanly. Added +${addedCount} new jobs.`
+        : `Checked pages ${logDoc.startPage}..${logDoc.endPage}. All jobs already up-to-date in database (+0 duplicates added).`;
+
       await ScraperLog.findByIdAndUpdate(currentScraperLogId, {
         endTime,
         durationSeconds: duration,
         newJobsAdded: addedCount,
         totalJobsInDb: finalJobCount,
         status: code === 0 ? 'SUCCESS' : 'FAILED',
-        logMessage: `Scraper finished cleanly. Added ${addedCount} new jobs.`
+        logMessage: msg
       }).catch(() => {});
       currentScraperLogId = null;
     }
