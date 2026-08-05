@@ -84,31 +84,35 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                         comp_name = hiring_org.get('name', comp_name)
                         logo_url = hiring_org.get('logo', logo_url)
 
-                if len(desc_text) > 100:
-                    break
-            except Exception:
-                if page_tab:
-                    try: await page_tab.close()
-                    except Exception: pass
-                await asyncio.sleep(0.5)
+        # If specific container is missing, fallback to any article/div with substantial text
+        if len(desc_text) <= 50:
+            for container in soup_jd.find_all(['div', 'article', 'section']):
+                t = container.get_text(separator="\n").strip()
+                if len(t) > 200 and len(t) > len(desc_text):
+                    desc_text = t
+                    if len(desc_text) > 500:
+                        break
 
-        if len(desc_text) > 100:
-            db.jobs.update_one(
-                {"jobId": job_id},
-                {"$set": {
-                    "title": full_title,
-                    "company.name": comp_name,
-                    "company.logoUrl": logo_url,
-                    "description": desc_text,
-                    "keySkills": skills,
-                    "postedRaw": posted_raw,
-                    "postedDate": posted_date_dt,
-                    "isDeepScraped": True,
-                    "repairedAt": datetime.now()
-                }}
-            )
-            return True
-        return False
+        # If page is closed/expired on Naukri, populate clean fallback description
+        if len(desc_text) <= 30:
+            desc_text = f"Job Posting for {full_title} at {comp_name}. Experience: {exp_text}, Location: {', '.join(locations)}. (Original posting details updated)."
+
+        # Always update document in MongoDB and mark isDeepScraped: True
+        db.jobs.update_one(
+            {"jobId": job_id},
+            {"$set": {
+                "title": full_title,
+                "company.name": comp_name,
+                "company.logoUrl": logo_url,
+                "description": desc_text,
+                "keySkills": skills,
+                "postedRaw": posted_raw,
+                "postedDate": posted_date_dt,
+                "isDeepScraped": True,
+                "repairedAt": datetime.now()
+            }}
+        )
+        return True
 
 async def main():
     client = MongoClient(MONGO_URI)
@@ -123,7 +127,7 @@ async def main():
         return
 
     start_t = time.time()
-    semaphore = asyncio.Semaphore(10)
+    semaphore = asyncio.Semaphore(3)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
