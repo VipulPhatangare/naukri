@@ -26,14 +26,16 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
         posted_raw = job_item.get('postedRaw', 'Recently')
         posted_date_dt = job_item.get('postedDate', datetime.now())
 
+        success_flag = False
         for attempt in range(3):
             page_tab = None
             try:
+                print(f"  [Worker Tab] JobID {job_id} | Attempt {attempt+1}/3: Opening {url[:60]}...", flush=True)
                 page_tab = await shared_context.new_page()
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 await page_tab.goto(url, wait_until="domcontentloaded", timeout=25000)
-                await page_tab.wait_for_timeout(2500)
+                await page_tab.wait_for_timeout(2000)
                 
                 jd_html = await page_tab.content()
                 soup_jd = BeautifulSoup(jd_html, 'html.parser')
@@ -84,6 +86,20 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                         comp_name = hiring_org.get('name', comp_name)
                         logo_url = hiring_org.get('logo', logo_url)
 
+                if len(desc_text) > 100:
+                    success_flag = True
+                    print(f"  [Worker Success] JobID {job_id} | Deep-scraped ({len(desc_text)} chars) on Attempt {attempt+1}", flush=True)
+                    break
+                else:
+                    print(f"  [Worker Warning] JobID {job_id} | Attempt {attempt+1}: DOM text length only {len(desc_text)} chars", flush=True)
+
+            except Exception as err:
+                print(f"  [Worker Error] JobID {job_id} | Attempt {attempt+1} Failed: {str(err)[:100]}", flush=True)
+                if page_tab:
+                    try: await page_tab.close()
+                    except Exception: pass
+                await asyncio.sleep(0.5)
+
         # If specific container is missing, fallback to any article/div with substantial text
         if len(desc_text) <= 50:
             for container in soup_jd.find_all(['div', 'article', 'section']):
@@ -92,10 +108,13 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                     desc_text = t
                     if len(desc_text) > 500:
                         break
+            if len(desc_text) > 50:
+                print(f"  [Worker Fallback] JobID {job_id} | Generic DOM container extracted ({len(desc_text)} chars)", flush=True)
 
         # If page is closed/expired on Naukri, populate clean fallback description
         if len(desc_text) <= 30:
             desc_text = f"Job Posting for {full_title} at {comp_name}. Experience: {exp_text}, Location: {', '.join(locations)}. (Original posting details updated)."
+            print(f"  [Worker Closed] JobID {job_id} | Listing closed/expired on Naukri. Populated metadata fallback.", flush=True)
 
         # Always update document in MongoDB and mark isDeepScraped: True
         db.jobs.update_one(
