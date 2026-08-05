@@ -127,7 +127,7 @@ async def main():
         return
 
     start_t = time.time()
-    semaphore = asyncio.Semaphore(3)
+    semaphore = asyncio.Semaphore(6)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
