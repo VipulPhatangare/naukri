@@ -150,15 +150,16 @@ def parse_srp_with_bs4(html_content, page_num):
                 'pageNo': page_num
             })
 
-    # 3. Fallback Regex Link Extraction for React hydrated pages
+    # 3. Fallback Regex Link Extraction for React hydrated pages (relative & absolute URLs)
     if not extracted_jobs:
-        matches = re.findall(r'href="(https://www\.naukri\.com/job-listings-[^"]+)"', html_content)
+        matches = re.findall(r'href=["\'](/job-listings-[^"\']+|https?://[^"\']*naukri\.com/job-listings-[^"\']+)["\']', html_content)
         for raw_url in set(matches):
-            job_id_match = re.search(r'(\d{10,12})', raw_url)
+            full_url = raw_url if raw_url.startswith('http') else f"https://www.naukri.com{raw_url}"
+            job_id_match = re.search(r'(\d{10,12})', full_url)
             job_id = job_id_match.group(1) if job_id_match else None
             if job_id and job_id not in seen_ids:
                 seen_ids.add(job_id)
-                clean_url = raw_url if '?' in raw_url else f"{raw_url}?src=directSearch"
+                clean_url = full_url if '?' in full_url else f"{full_url}?src=directSearch"
                 extracted_jobs.append({
                     'jobId': job_id,
                     'url': clean_url,
@@ -194,10 +195,8 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
-                try:
-                    await page_tab.wait_for_selector('.srp-jobtuple-wrapper, script[type="application/ld+json"], a[href*="job-listings"]', timeout=5000)
-                except Exception:
-                    await page_tab.wait_for_timeout(2000)
+                await page_tab.evaluate("window.scrollTo(0, 1500)")
+                await page_tab.wait_for_timeout(2000)
 
                 html = await page_tab.content()
                 page_jobs = parse_srp_with_bs4(html, p_num)
