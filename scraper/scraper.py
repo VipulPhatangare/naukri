@@ -182,8 +182,9 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
     """Worker task that harvests SRP pages concurrently using shared_context."""
     async with semaphore:
         url_patterns = [
+            f"https://www.naukri.com/jobs-in-india-{p_num}?jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?jobAge={job_age}",
             f"https://www.naukri.com/jobs-in-india-{p_num}" if p_num > 1 else "https://www.naukri.com/jobs-in-india",
-            f"https://www.naukri.com/jobs-in-india-{p_num}?jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?jobAge={job_age}"
+            f"https://www.naukri.com/it-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/it-jobs"
         ]
         retries = 3
         page_jobs = []
@@ -194,22 +195,29 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
             try:
                 print(f"  [SRP Opening] Page {p_num} | Attempt {attempt+1}/3: {srp_url}", flush=True)
                 page_tab = await shared_context.new_page()
-                await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+                await page_tab.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                """)
                 
-                await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
+                resp = await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
                 await page_tab.evaluate("window.scrollTo(0, 1500)")
                 await page_tab.wait_for_timeout(2500)
 
                 html = await page_tab.content()
+                final_url = page_tab.url
+                status_code = resp.status if resp else 0
+                
                 page_jobs = parse_srp_with_bs4(html, p_num)
                 await page_tab.close()
                 page_tab = None
 
                 if page_jobs:
-                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs on attempt {attempt+1}", flush=True)
+                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs on attempt {attempt+1} (Status {status_code})", flush=True)
                     break
                 else:
-                    print(f"  [SRP Harvest Empty] Page {p_num}: Attempt {attempt+1} parsed 0 jobs", flush=True)
+                    print(f"  [SRP Harvest Empty] Page {p_num}: Attempt {attempt+1} parsed 0 jobs (Status {status_code}, HTML Len {len(html)} bytes, Final URL: {final_url})", flush=True)
 
             except Exception as err:
                 print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:100]}", flush=True)
