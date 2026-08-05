@@ -363,7 +363,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
             "keySkills": skills,
             "postedRaw": posted_raw,
             "postedDate": posted_date_dt,
-            "isDeepScraped": len(desc_text) > 150 and "Original posting details updated" not in desc_text,
+            "isDeepScraped": len(desc_text) > 30 and "Original posting details updated" not in desc_text,
             "scrapedAt": datetime.now()
         }
 

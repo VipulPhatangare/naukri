@@ -112,7 +112,7 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
             if len(desc_text) > 50:
                 print(f"  [Worker Fallback] JobID {job_id} | Generic DOM container extracted ({len(desc_text)} chars)", flush=True)
 
-        is_real_deep_scraped = len(desc_text) > 150
+        is_real_deep_scraped = len(desc_text) > 30 and "Original posting details updated" not in desc_text
 
         # If page is truly closed/expired on Naukri, populate metadata fallback for display
         if len(desc_text) <= 30:
