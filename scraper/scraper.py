@@ -256,7 +256,10 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 await page_tab.goto(url, wait_until="domcontentloaded", timeout=20000)
-                await page_tab.wait_for_timeout(2000)
+                try:
+                    await page_tab.wait_for_selector('section.job-desc-container, div.styles_JDC__dang-inner-html, div.job-desc, script[type="application/ld+json"]', timeout=6000)
+                except Exception:
+                    await page_tab.wait_for_timeout(2000)
                 
                 jd_html = await page_tab.content()
                 soup_jd = BeautifulSoup(jd_html, 'html.parser')
@@ -360,7 +363,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
             "keySkills": skills,
             "postedRaw": posted_raw,
             "postedDate": posted_date_dt,
-            "isDeepScraped": len(desc_text) > 200,
+            "isDeepScraped": len(desc_text) > 150 and "Original posting details updated" not in desc_text,
             "scrapedAt": datetime.now()
         }
 

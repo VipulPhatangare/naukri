@@ -35,24 +35,17 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 await page_tab.goto(url, wait_until="domcontentloaded", timeout=25000)
-                await page_tab.wait_for_timeout(2000)
+                try:
+                    await page_tab.wait_for_selector('section.job-desc-container, div.styles_JDC__dang-inner-html, div.job-desc, script[type="application/ld+json"]', timeout=6000)
+                except Exception:
+                    await page_tab.wait_for_timeout(2000)
                 
                 jd_html = await page_tab.content()
                 soup_jd = BeautifulSoup(jd_html, 'html.parser')
                 await page_tab.close()
                 page_tab = None
 
-                # 1. DOM Job Description extraction
-                jd_container = soup_jd.find(['div', 'section'], class_=re.compile(r'styles_JDC__dang-inner-html|dang-inner-html|styles_job-desc|job-desc|styles_job-desc-container'))
-                if not jd_container:
-                    jd_container = soup_jd.find('section', class_=re.compile(r'job-desc-container|styles_job-header'))
-
-                if jd_container:
-                    extracted_dom = jd_container.get_text(separator="\n").strip()
-                    if len(extracted_dom) > len(desc_text):
-                        desc_text = extracted_dom
-
-                # 2. JSON-LD JobPosting extraction
+                # 1. JSON-LD JobPosting extraction (UNLIMITED full text)
                 jp_data = None
                 for js in soup_jd.find_all('script', type='application/ld+json'):
                     if js.string and 'JobPosting' in js.string:
@@ -86,6 +79,14 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                         comp_name = hiring_org.get('name', comp_name)
                         logo_url = hiring_org.get('logo', logo_url)
 
+                # 2. DOM Job Description extraction fallback
+                if len(desc_text) <= 50:
+                    jd_container = soup_jd.find(['div', 'section', 'article'], class_=re.compile(r'styles_JDC__dang-inner-html|dang-inner-html|styles_job-desc|job-desc|styles_job-desc-container|job-desc-container|styles_job-header'))
+                    if jd_container:
+                        extracted_dom = jd_container.get_text(separator="\n").strip()
+                        if len(extracted_dom) > len(desc_text):
+                            desc_text = extracted_dom
+
                 if len(desc_text) > 100:
                     success_flag = True
                     print(f"  [Worker Success] JobID {job_id} | Deep-scraped ({len(desc_text)} chars) on Attempt {attempt+1}", flush=True)
@@ -100,7 +101,7 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                     except Exception: pass
                 await asyncio.sleep(0.5)
 
-        # If specific container is missing, fallback to any article/div with substantial text
+        # 3. Final Fallback to any article/div container if specific tags missed
         if len(desc_text) <= 50:
             for container in soup_jd.find_all(['div', 'article', 'section']):
                 t = container.get_text(separator="\n").strip()
@@ -111,12 +112,14 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
             if len(desc_text) > 50:
                 print(f"  [Worker Fallback] JobID {job_id} | Generic DOM container extracted ({len(desc_text)} chars)", flush=True)
 
-        # If page is closed/expired on Naukri, populate clean fallback description
+        is_real_deep_scraped = len(desc_text) > 150
+
+        # If page is truly closed/expired on Naukri, populate metadata fallback for display
         if len(desc_text) <= 30:
             desc_text = f"Job Posting for {full_title} at {comp_name}. Experience: {exp_text}, Location: {', '.join(locations)}. (Original posting details updated)."
-            print(f"  [Worker Closed] JobID {job_id} | Listing closed/expired on Naukri. Populated metadata fallback.", flush=True)
+            print(f"  [Worker Warning] JobID {job_id} | Unscraped - Retrying in future batches.", flush=True)
 
-        # Always update document in MongoDB and mark isDeepScraped: True
+        # Update document in MongoDB. ONLY mark isDeepScraped: True if real text > 150 chars was extracted!
         db.jobs.update_one(
             {"jobId": job_id},
             {"$set": {
@@ -127,11 +130,11 @@ async def deep_scrape_single(job_item, shared_context, semaphore, db):
                 "keySkills": skills,
                 "postedRaw": posted_raw,
                 "postedDate": posted_date_dt,
-                "isDeepScraped": True,
+                "isDeepScraped": is_real_deep_scraped,
                 "repairedAt": datetime.now()
             }}
         )
-        return True
+        return is_real_deep_scraped
 
 async def main():
     client = MongoClient(MONGO_URI)
