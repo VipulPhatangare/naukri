@@ -179,127 +179,40 @@ def parse_srp_with_bs4(html_content, page_num):
     return extracted_jobs
 
 async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_list, job_age=0):
-    """Worker task that harvests SRP pages concurrently using Naukri JSON API with WAF bypass fallbacks."""
+    """Worker task that harvests SRP pages concurrently using shared_context."""
     async with semaphore:
+        if job_age and job_age > 0:
+            srp_url = f"https://www.naukri.com/jobs-in-india-{p_num}?sort=f&jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?sort=f&jobAge={job_age}"
+        else:
+            srp_url = f"https://www.naukri.com/jobs-in-india-{p_num}" if p_num > 1 else "https://www.naukri.com/jobs-in-india"
+        
         retries = 3
         page_jobs = []
         
-        # 1. Primary Strategy: In-Browser fetch() against Naukri JSON REST API
-        api_url = f"https://www.naukri.com/jobapi/v3/search?noOfResults=20&urlType=search_by_keyword&searchType=dir&jobAge={job_age}&pageNo={p_num}"
-        page_tab = None
-        try:
-            page_tab = await shared_context.new_page()
-            await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-            
-            # Navigate to base domain to acquire native Akamai cookies & session context
-            await page_tab.goto("https://www.naukri.com/", wait_until="domcontentloaded", timeout=20000)
-            await page_tab.wait_for_timeout(1000)
-
-            # Perform native fetch within browser context
-            data = await page_tab.evaluate("""async (targetUrl) => {
-                try {
-                    const res = await fetch(targetUrl, {
-                        headers: {
-                            'appid': '109',
-                            'systemid': 'Naukri',
-                            'gid': 'location',
-                            'accept': 'application/json, text/plain, */*'
-                        }
-                    });
-                    if (res.status === 200) {
-                        return await res.json();
-                    }
-                    return { errorStatus: res.status };
-                } catch (e) {
-                    return { errorMsg: e.toString() };
-                }
-            }""", api_url)
-
-            await page_tab.close()
-            page_tab = None
-
-            if data and isinstance(data, dict) and 'jobDetails' in data:
-                job_details = data.get('jobDetails', [])
-                for item in job_details:
-                    j_id = str(item.get('jobId', ''))
-                    jd_url = item.get('jdURL', '')
-                    if j_id and jd_url:
-                        full_url = jd_url if jd_url.startswith('http') else f"https://www.naukri.com{jd_url}"
-                        clean_url = full_url if '?' in full_url else f"{full_url}?src=directSearch"
-                        comp_obj = item.get('companyDetail', {})
-                        comp_name = comp_obj.get('name', 'Corporate Employer')
-                        logo = comp_obj.get('logoUrl', '')
-                        
-                        skills = [s.get('name') for s in item.get('tagsAndSkills', []) if isinstance(s, dict) and s.get('name')]
-                        if not skills:
-                            skills = ["Customer Support", "Operations"]
-
-                        page_jobs.append({
-                            'jobId': j_id,
-                            'url': clean_url,
-                            'title': item.get('title', 'Job Opening'),
-                            'companyName': comp_name,
-                            'companyLogo': logo,
-                            'rating': float(comp_obj.get('rating', 4.1)),
-                            'experience': item.get('experienceTitle', '0-5 Yrs'),
-                            'salary': item.get('salaryDetail', {}).get('label', 'Not disclosed'),
-                            'location': item.get('placeholders', [{}])[0].get('label', 'PAN India') if item.get('placeholders') else 'PAN India',
-                            'description': item.get('jobDescription', f"Job opportunity for {item.get('title')}."),
-                            'keySkills': skills,
-                            'postedRaw': item.get('footerPlaceholder', 'Recently'),
-                            'pageNo': p_num
-                        })
-
-                if page_jobs:
-                    print(f"  [API Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs via In-Browser fetch()", flush=True)
-                    batch_jobs_list.extend(page_jobs)
-                    return
-                else:
-                    print(f"  [API Empty] Page {p_num}: Response ok but 0 jobs returned", flush=True)
-            elif data and 'errorStatus' in data:
-                print(f"  [API Error] Page {p_num}: Status {data['errorStatus']} returned", flush=True)
-        except Exception as e:
-            print(f"  [API Exception] Page {p_num}: {str(e)[:100]}", flush=True)
-            if page_tab:
-                try: await page_tab.close()
-                except Exception: pass
-
-        # 2. Secondary Strategy: SEO Keyword Category URLs (Bypasses Akamai WAF 403)
-        url_patterns = [
-            f"https://www.naukri.com/it-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/it-jobs",
-            f"https://www.naukri.com/software-engineer-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/software-engineer-jobs",
-            f"https://www.naukri.com/full-stack-developer-jobs-{p_num}" if p_num > 1 else "https://www.naukri.com/full-stack-developer-jobs"
-        ]
-
         for attempt in range(retries):
-            srp_url = url_patterns[attempt % len(url_patterns)]
             page_tab = None
             try:
                 page_tab = await shared_context.new_page()
-                await page_tab.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                """)
+                await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 resp = await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
                 await page_tab.evaluate("window.scrollTo(0, 1500)")
-                await page_tab.wait_for_timeout(2000)
+                await page_tab.wait_for_timeout(2500)
 
                 html = await page_tab.content()
-                final_url = page_tab.url
                 status_code = resp.status if resp else 0
-                
                 page_jobs = parse_srp_with_bs4(html, p_num)
                 await page_tab.close()
                 page_tab = None
 
                 if page_jobs:
-                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs via SEO Category URL ({srp_url})", flush=True)
+                    print(f"  [SRP Harvest] Page {p_num}: Harvested {len(page_jobs)} jobs on attempt {attempt+1}", flush=True)
                     break
                 else:
-                    print(f"  [SRP Harvest Empty] Page {p_num}: Attempt {attempt+1} Status {status_code}, HTML Len {len(html)} bytes ({srp_url})", flush=True)
+                    print(f"  [SRP Harvest] Page {p_num} (Attempt {attempt+1}): Status {status_code}, HTML len {len(html)} bytes", flush=True)
+
             except Exception as err:
-                print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:80]}", flush=True)
+                print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:100]}", flush=True)
                 if page_tab:
                     try: await page_tab.close()
                     except Exception: pass
@@ -313,10 +226,9 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
     Extracts 100% UNLIMITED full character job description text and posted date without length truncations.
     """
     async with detail_semaphore:
-        url = job_item['url']
-        job_id = job_item['jobId']
         db = mongo_client.naukri_db
-
+        job_id = job_item['jobId']
+        url = job_item['url']
         full_title = job_item.get('title', 'Job Opening')
         comp_name = job_item.get('companyName', 'Corporate Employer')
         logo_url = job_item.get('companyLogo', '')
@@ -346,7 +258,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                 await page_tab.close()
                 page_tab = None
 
-                # 1. DOM Job Description extraction (checking all container patterns)
+                # 1. DOM Job Description extraction
                 jd_container = soup_jd.find(['div', 'section'], class_=re.compile(r'styles_JDC__dang-inner-html|dang-inner-html|styles_job-desc|job-desc|styles_job-desc-container'))
                 if not jd_container:
                     jd_container = soup_jd.find('section', class_=re.compile(r'job-desc-container|styles_job-header'))
@@ -356,7 +268,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
                     if len(extracted_dom) > len(desc_text):
                         desc_text = extracted_dom
 
-                # 2. JSON-LD JobPosting extraction (UNLIMITED character length + datePosted)
+                # 2. JSON-LD JobPosting extraction
                 jp_data = None
                 for js in soup_jd.find_all('script', type='application/ld+json'):
                     if js.string and 'JobPosting' in js.string:
@@ -449,7 +361,7 @@ async def deep_scrape_single_job_link(job_item, shared_context, detail_semaphore
 
         db.jobs.update_one({"jobId": job_id}, {"$set": job_doc}, upsert=True)
 
-async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10, srp_workers=10, detail_workers=10, job_age=15, purge=False):
+async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10, srp_workers=5, detail_workers=5, job_age=15, purge=False):
     print(f"=== FRESHNESS-BASED PARALLEL DEEP NAUKRI SCRAPER STARTED (LAST {job_age} DAYS, PAGES {start_page} TO {total_pages}, WORKERS {detail_workers}) ===", flush=True)
     if purge:
         clear_database_storage()
@@ -464,12 +376,20 @@ async def run_10page_batch_pipeline(start_page=1, total_pages=150, batch_size=10
     detail_semaphore = asyncio.Semaphore(detail_workers)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
-        )
+        try:
+            browser = await p.chromium.launch(
+                headless=True,
+                channel="chrome",
+                args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
+            )
+        except Exception:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
+            )
+
         shared_context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={'width': 1920, 'height': 1080}
         )
 
