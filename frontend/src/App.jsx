@@ -5,7 +5,7 @@ import JobExplorer from './components/JobExplorer';
 import JobDetailModal from './components/JobDetailModal';
 import AdminDashboard from './components/AdminDashboard';
 
-const SOCKET_URL = 'http://localhost:5000';
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3006' : window.location.origin);
 
 // Helper to load persistent state from URL query & localStorage
 const getInitialState = () => {

@@ -1,0 +1,4 @@
+# Large MongoDB data dumps — transfer these out-of-band, not through git
+naukri_export.json
+*.dump
+*.bson

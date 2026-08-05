@@ -22,7 +22,7 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3006;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/naukri_db';
 const JWT_SECRET = 'NAUKRI_SECRET_KEY_2026_VIPUL';
 
