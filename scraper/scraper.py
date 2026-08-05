@@ -79,8 +79,8 @@ def parse_srp_with_bs4(html_content, page_num):
         except Exception:
             continue
 
-    # 2. Parse DOM srp-jobtuple-wrapper divs
-    tuples = soup.find_all('div', class_=re.compile(r'srp-jobtuple-wrapper|cust-job-tuple'))
+    # 2. Parse DOM srp-jobtuple-wrapper / cust-job-tuple / article divs
+    tuples = soup.find_all(['div', 'article'], class_=re.compile(r'srp-jobtuple-wrapper|cust-job-tuple|jobTuple|tuple'))
     for t in tuples:
         job_id = t.get('data-job-id')
         row1 = t.find('div', class_='row1')
@@ -129,7 +129,6 @@ def parse_srp_with_bs4(html_content, page_num):
             row5 = t.find('div', class_='row5')
             skills = [li.text.strip() for li in row5.find_all('li')] if row5 else ["Operations"]
             
-            # Extract Posted Date/Tag from DOM footer
             row6 = t.find('div', class_=re.compile(r'row6|tuple-footer')) or t
             posted_tag = row6.find('span', class_=re.compile(r'job-post-day|type|posted-by')) if row6 else None
             posted_raw = posted_tag.text.strip() if posted_tag else "Recently"
@@ -150,7 +149,7 @@ def parse_srp_with_bs4(html_content, page_num):
                 'pageNo': page_num
             })
 
-    # 3. Fallback Regex Link Extraction for React hydrated pages (relative & absolute URLs)
+    # 3. Fallback Regex Link Extraction for React hydrated pages
     if not extracted_jobs:
         matches = re.findall(r'href=["\'](/job-listings-[^"\']+|https?://[^"\']*naukri\.com/job-listings-[^"\']+)["\']', html_content)
         for raw_url in set(matches):
@@ -176,36 +175,44 @@ def parse_srp_with_bs4(html_content, page_num):
                     'pageNo': page_num
                 })
 
+    print(f"    [SRP Parse] Page {page_num}: Extracted {len(extracted_jobs)} jobs (JSON-LD: {len(scripts)} scripts, DOM: {len(tuples)} tuples, HTML Len: {len(html_content)} bytes)", flush=True)
     return extracted_jobs
 
 async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_list, job_age=0):
     """Worker task that harvests SRP pages concurrently using shared_context."""
     async with semaphore:
-        if job_age and job_age > 0:
-            srp_url = f"https://www.naukri.com/jobs-in-india-{p_num}?sort=f&jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?sort=f&jobAge={job_age}"
-        else:
-            srp_url = f"https://www.naukri.com/jobs-in-india-{p_num}?clusters=functionalAreaGid" if p_num > 1 else "https://www.naukri.com/jobs-in-india?clusters=functionalAreaGid"
+        url_patterns = [
+            f"https://www.naukri.com/jobs-in-india-{p_num}" if p_num > 1 else "https://www.naukri.com/jobs-in-india",
+            f"https://www.naukri.com/jobs-in-india-{p_num}?jobAge={job_age}" if p_num > 1 else f"https://www.naukri.com/jobs-in-india?jobAge={job_age}"
+        ]
         retries = 3
         page_jobs = []
         
         for attempt in range(retries):
+            srp_url = url_patterns[attempt % len(url_patterns)]
             page_tab = None
             try:
+                print(f"  [SRP Opening] Page {p_num} | Attempt {attempt+1}/3: {srp_url}", flush=True)
                 page_tab = await shared_context.new_page()
                 await page_tab.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 
                 await page_tab.goto(srp_url, wait_until="domcontentloaded", timeout=25000)
                 await page_tab.evaluate("window.scrollTo(0, 1500)")
-                await page_tab.wait_for_timeout(2000)
+                await page_tab.wait_for_timeout(2500)
 
                 html = await page_tab.content()
                 page_jobs = parse_srp_with_bs4(html, p_num)
                 await page_tab.close()
+                page_tab = None
+
                 if page_jobs:
-                    print(f"  [SRP Harvest] Page {p_num}: Harvested {len(page_jobs)} jobs on attempt {attempt+1}", flush=True)
+                    print(f"  [SRP Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs on attempt {attempt+1}", flush=True)
                     break
+                else:
+                    print(f"  [SRP Harvest Empty] Page {p_num}: Attempt {attempt+1} parsed 0 jobs", flush=True)
+
             except Exception as err:
-                print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:80]}", flush=True)
+                print(f"  [SRP Error] Page {p_num} Attempt {attempt+1} failed: {str(err)[:100]}", flush=True)
                 if page_tab:
                     try: await page_tab.close()
                     except Exception: pass
