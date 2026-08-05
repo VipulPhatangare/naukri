@@ -191,8 +191,10 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
         ]
 
         for api_url in api_urls:
+            page_tab = None
             try:
-                resp = await shared_context.request.get(
+                page_tab = await shared_context.new_page()
+                resp = await page_tab.request.get(
                     api_url,
                     headers={
                         "appid": "109",
@@ -203,7 +205,8 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                     },
                     timeout=15000
                 )
-                if resp.status == 200:
+                status_code = resp.status
+                if status_code == 200:
                     data = await resp.json()
                     job_details = data.get('jobDetails', [])
                     for item in job_details:
@@ -236,12 +239,24 @@ async def worker_scrape_srp_page(p_num, shared_context, semaphore, batch_jobs_li
                                 'pageNo': p_num
                             })
 
+                    await page_tab.close()
+                    page_tab = None
+
                     if page_jobs:
                         print(f"  [API Harvest Success] Page {p_num}: Harvested {len(page_jobs)} jobs via Naukri REST API", flush=True)
                         batch_jobs_list.extend(page_jobs)
                         return
+                    else:
+                        print(f"  [API Empty] Page {p_num}: Status 200 but jobDetails array was empty", flush=True)
+                else:
+                    print(f"  [API Error] Page {p_num}: Status {status_code} returned from API", flush=True)
+                    await page_tab.close()
+                    page_tab = None
             except Exception as e:
-                pass
+                print(f"  [API Exception] Page {p_num}: {str(e)[:100]}", flush=True)
+                if page_tab:
+                    try: await page_tab.close()
+                    except Exception: pass
 
         # 2. Secondary Strategy: Browser Playwright HTML Tab Navigation Fallback
         url_patterns = [
