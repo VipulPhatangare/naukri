@@ -349,6 +349,16 @@ app.get('/api/scraper/logs', async (req, res) => {
   }
 });
 
+// Clear Scraper Logs History API
+app.delete('/api/scraper/logs', verifyAdminToken, async (req, res) => {
+  try {
+    await ScraperLog.deleteMany({});
+    res.json({ message: 'Scraper audit logs cleared successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear scraper audit logs' });
+  }
+});
+
 // 4. Admin Numerical Stats Overview API (No graphs, pure numbers)
 app.get('/api/admin/stats', async (req, res) => {
   try {

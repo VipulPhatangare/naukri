@@ -197,6 +197,32 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
     setTimeRangeTextSelect(textMap[val] || `Last ${val} Days`);
   };
 
+  const handleClearLogs = async () => {
+    setModalMessage({
+      title: 'Clear Execution History?',
+      text: 'Are you sure you want to permanently clear all Scraper Audit Logs & Execution History? This action cannot be undone.',
+      type: 'confirm',
+      confirmAction: async () => {
+        setModalMessage(null);
+        try {
+          const res = await fetch('/api/scraper/logs', {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            setModalMessage({ title: 'History Cleared', text: 'Scraper audit logs and execution history have been cleared cleanly.', type: 'success' });
+            setLogs([]);
+            fetchStats();
+          } else {
+            setModalMessage({ title: 'Clear Failed', text: 'Failed to clear execution history', type: 'error' });
+          }
+        } catch (e) {
+          setModalMessage({ title: 'Connection Error', text: 'Error connecting to server', type: 'error' });
+        }
+      }
+    });
+  };
+
   // If Not Authenticated: Render Admin Login Form
   if (!user) {
     return (
@@ -556,9 +582,14 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
             </p>
           </div>
 
-          <button onClick={() => { fetchStats(); fetchLogs(); }} className="btn-secondary" style={{ padding: '0.45rem 0.85rem', fontSize: '0.82rem' }}>
-            <RefreshCw size={14} className={loadingLogs ? 'spin' : ''} /> Refresh History
-          </button>
+          <div style={{ display: 'flex', gap: '0.6rem' }}>
+            <button onClick={() => { fetchStats(); fetchLogs(); }} className="btn-secondary" style={{ padding: '0.45rem 0.85rem', fontSize: '0.82rem' }}>
+              <RefreshCw size={14} className={loadingLogs ? 'spin' : ''} /> Refresh History
+            </button>
+            <button onClick={handleClearLogs} className="btn-danger" style={{ padding: '0.45rem 0.85rem', fontSize: '0.82rem' }}>
+              Clear History
+            </button>
+          </div>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -654,7 +685,7 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
             background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(11, 15, 25, 0.98))'
           }}>
             <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>
-              {modalMessage.type === 'error' ? '⚠️' : modalMessage.type === 'success' ? '✅' : '🔔'}
+              {modalMessage.type === 'error' ? '⚠️' : modalMessage.type === 'success' ? '✅' : modalMessage.type === 'confirm' ? '❓' : '🔔'}
             </div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff', marginBottom: '0.6rem' }}>
               {modalMessage.title || 'System Notification'}
@@ -662,13 +693,33 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
             <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '1.75rem' }}>
               {modalMessage.text}
             </p>
-            <button 
-              onClick={() => setModalMessage(null)}
-              className="btn-primary" 
-              style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
-            >
-              OK, Got it
-            </button>
+            
+            {modalMessage.type === 'confirm' ? (
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button 
+                  onClick={() => setModalMessage(null)}
+                  className="btn-secondary" 
+                  style={{ flex: 1, justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => modalMessage.confirmAction && modalMessage.confirmAction()}
+                  className="btn-danger" 
+                  style={{ flex: 1, justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
+                >
+                  Confirm Clear
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setModalMessage(null)}
+                className="btn-primary" 
+                style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
+              >
+                OK, Got it
+              </button>
+            )}
           </div>
         </div>
       )}
