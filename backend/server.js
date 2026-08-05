@@ -95,8 +95,8 @@ async function launchScraperProcess({ jobAge = 2, startPage = 1, pages = 150, tr
     '--pages', pages.toString(),
     '--job-age', jobAge.toString(),
     '--batch-size', '10',
-    '--srp-workers', '5',
-    '--detail-workers', '5'
+    '--srp-workers', '3',
+    '--detail-workers', '3'
   ];
 
   console.log(`[Scraper Engine] Launching python ${args.join(' ')}`);
