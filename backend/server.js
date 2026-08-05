@@ -121,7 +121,8 @@ async function launchScraperProcess({ jobAge = 2, startPage = 1, pages = 150, tr
   });
   currentScraperLogId = logDoc._id;
 
-  activeScraperProcess = spawn('python', args, { cwd: path.join(__dirname, '..') });
+  const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  activeScraperProcess = spawn(pythonBin, args, { cwd: path.join(__dirname, '..') });
   scraperStatus.isRunning = true;
   scraperStatus.startTime = new Date();
   scraperStatus.timeRangeText = timeRangeText;
@@ -194,7 +195,8 @@ async function launchRepairProcess({ triggerType = 'MANUAL', triggeredBy = 'Syst
   });
   currentScraperLogId = logDoc._id;
 
-  activeScraperProcess = spawn('python', [pythonScript], { cwd: path.join(__dirname, '..') });
+  const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  activeScraperProcess = spawn(pythonBin, [pythonScript], { cwd: path.join(__dirname, '..') });
   scraperStatus.isRunning = true;
   scraperStatus.startTime = new Date();
   scraperStatus.timeRangeText = `Repairing ${unscrapedCount} Jobs`;
