@@ -122,33 +122,42 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
     setUser(null);
   };
 
-  const handleStartManualScraper = async (e) => {
+  const handleStartManualScraper = (e) => {
     e.preventDefault();
-    try {
-      const res = await fetch('/api/scraper/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          jobAge: parseInt(jobAgeSelect),
-          startPage: parseInt(startPageInput),
-          pages: parseInt(pagesInput),
-          timeRangeText: timeRangeTextSelect
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setModalMessage({ title: 'Engine Error', text: data.error || 'Failed to start scraper process', type: 'error' });
-      } else {
-        setModalMessage({ title: 'Scraper Launched', text: `Scraper engine started for ${timeRangeTextSelect} (Pages ${startPageInput}..${pagesInput})`, type: 'success' });
-        fetchStats();
-        fetchLogs();
+    setModalMessage({
+      title: 'Confirm Scraper Launch',
+      text: `Are you sure you want to launch manual scraping for ${timeRangeTextSelect} (Pages ${startPageInput} to ${pagesInput})?`,
+      type: 'confirm',
+      confirmText: 'Confirm & Start Scraper',
+      confirmAction: async () => {
+        setModalMessage(null);
+        try {
+          const res = await fetch('/api/scraper/start', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              jobAge: parseInt(jobAgeSelect),
+              startPage: parseInt(startPageInput),
+              pages: parseInt(pagesInput),
+              timeRangeText: timeRangeTextSelect
+            })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            setModalMessage({ title: 'Engine Error', text: data.error || 'Failed to start scraper process', type: 'error' });
+          } else {
+            setModalMessage({ title: 'Scraper Launched', text: `Scraper engine started for ${timeRangeTextSelect} (Pages ${startPageInput}..${pagesInput})`, type: 'success' });
+            fetchStats();
+            fetchLogs();
+          }
+        } catch (e) {
+          setModalMessage({ title: 'Connection Error', text: 'Error connecting to backend API', type: 'error' });
+        }
       }
-    } catch (e) {
-      setModalMessage({ title: 'Connection Error', text: 'Error connecting to backend API', type: 'error' });
-    }
+    });
   };
 
   const handleStopManualScraper = async () => {
@@ -708,7 +717,7 @@ export default function AdminDashboard({ scraperStatus, onStartScraper, onStopSc
                   className="btn-danger" 
                   style={{ flex: 1, justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem', borderRadius: '10px' }}
                 >
-                  Confirm Clear
+                  {modalMessage.confirmText || 'Confirm Action'}
                 </button>
               </div>
             ) : (
