@@ -6,10 +6,12 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cron = require('node-cron');
+const crypto = require('crypto');
 
 const Job = require('./models/Job');
 const User = require('./models/User');
 const ScraperLog = require('./models/ScraperLog');
+const ApiKey = require('./models/ApiKey');
 
 const app = express();
 
@@ -35,11 +37,12 @@ let scraperStatus = {
   triggeredBy: 'Manual Admin'
 };
 
-// Database Connection & Auto Admin Seeder
+// Database Connection & Auto Admin / API Key Seeder
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log(`[MongoDB] Connected successfully to ${MONGO_URI}`);
     await seedAdminUser();
+    await getOrCreateActiveApiKey();
   })
   .catch(err => console.error('[MongoDB] Connection error:', err));
 
@@ -64,7 +67,32 @@ async function seedAdminUser() {
   }
 }
 
-// Auth Middleware
+// API Key Helpers (Ensures ONLY 1 active API key works at a time)
+async function getOrCreateActiveApiKey() {
+  try {
+    let apiKeyDoc = await ApiKey.findOne({ isActive: true });
+    if (!apiKeyDoc) {
+      const newKey = 'nk_live_' + crypto.randomBytes(32).toString('hex');
+      apiKeyDoc = await ApiKey.create({ key: newKey, isActive: true });
+      console.log(`[API Key Seeder] Created initial active API key: ${newKey}`);
+    }
+    return apiKeyDoc;
+  } catch (e) {
+    console.error('[API Key Seeder Error]', e);
+    return null;
+  }
+}
+
+async function regenerateActiveApiKey() {
+  // Deactivate all existing API keys so only 1 API key works at a time
+  await ApiKey.updateMany({}, { isActive: false });
+  const newKey = 'nk_live_' + crypto.randomBytes(32).toString('hex');
+  const apiKeyDoc = await ApiKey.create({ key: newKey, isActive: true });
+  console.log(`[API Key Engine] Generated brand new API Key: ${newKey}`);
+  return apiKeyDoc;
+}
+
+// Auth Middleware (Admin Token)
 function verifyAdminToken(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -78,6 +106,39 @@ function verifyAdminToken(req, res, next) {
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Invalid or expired access token' });
+  }
+}
+
+// API Key Auth Middleware (For Data Export API)
+async function verifyApiKey(req, res, next) {
+  try {
+    let key = req.body?.apiKey || req.query?.apiKey || req.headers['x-api-key'];
+    if (!key && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      key = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!key) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: API key missing. Pass "apiKey" in JSON body or "x-api-key" header.'
+      });
+    }
+
+    const activeKeyDoc = await ApiKey.findOne({ key: key.trim(), isActive: true });
+    if (!activeKeyDoc) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: Invalid, inactive, or revoked API key.'
+      });
+    }
+
+    // Update last used timestamp
+    ApiKey.findByIdAndUpdate(activeKeyDoc._id, { lastUsedAt: new Date() }).catch(() => {});
+    req.apiKeyDoc = activeKeyDoc;
+    next();
+  } catch (e) {
+    console.error('API Key Verification Error:', e);
+    return res.status(500).json({ success: false, error: 'API key verification failed' });
   }
 }
 
@@ -316,6 +377,153 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', verifyAdminToken, (req, res) => {
   res.json({ user: req.user });
 });
+
+// Admin API Key Management Endpoints
+app.get('/api/admin/api-key', verifyAdminToken, async (req, res) => {
+  try {
+    const apiKeyDoc = await getOrCreateActiveApiKey();
+    res.json({
+      key: apiKeyDoc.key,
+      name: apiKeyDoc.name,
+      createdAt: apiKeyDoc.createdAt,
+      lastUsedAt: apiKeyDoc.lastUsedAt,
+      isActive: apiKeyDoc.isActive
+    });
+  } catch (err) {
+    console.error('Error fetching API key:', err);
+    res.status(500).json({ error: 'Failed to retrieve API key' });
+  }
+});
+
+app.post('/api/admin/api-key/regenerate', verifyAdminToken, async (req, res) => {
+  try {
+    const apiKeyDoc = await regenerateActiveApiKey();
+    res.json({
+      message: 'API Key regenerated successfully. Previous key is now revoked.',
+      key: apiKeyDoc.key,
+      createdAt: apiKeyDoc.createdAt,
+      isActive: apiKeyDoc.isActive
+    });
+  } catch (err) {
+    console.error('Error regenerating API key:', err);
+    res.status(500).json({ error: 'Failed to regenerate API key' });
+  }
+});
+
+// Public Data Export Endpoint (POST & GET) - Defaults to ALL data unless explicit limit is provided
+const handleExportAllJobsData = async (req, res) => {
+  try {
+    const totalCount = await Job.countDocuments({});
+
+    // Parse parameters from JSON body or query params
+    const page = Math.max(1, parseInt(req.body?.page || req.query?.page) || 1);
+    let limitParam = req.body?.limit !== undefined ? req.body.limit : req.query?.limit;
+
+    // Check if client explicitly requested a positive limit
+    let hasExplicitLimit = limitParam !== undefined && limitParam !== null && limitParam !== '' && limitParam !== 0 && limitParam !== '0' && limitParam !== 'all' && limitParam !== 'unlimited';
+    
+    let requestedLimit = hasExplicitLimit ? parseInt(limitParam) : 0;
+
+    // If requested limit is larger than or equal to totalCount, send ALL data with no restrictions
+    let isUnlimitedOrExceedsTotal = !hasExplicitLimit || requestedLimit <= 0 || requestedLimit >= totalCount;
+
+    let query = Job.find({}).sort({ postedDate: -1 }).lean();
+
+    if (!isUnlimitedOrExceedsTotal) {
+      const skip = (page - 1) * requestedLimit;
+      query = query.skip(skip).limit(requestedLimit);
+    }
+
+    const jobs = await query;
+    const totalPages = !isUnlimitedOrExceedsTotal ? Math.ceil(totalCount / requestedLimit) : 1;
+
+    res.json({
+      success: true,
+      totalCount,
+      page: !isUnlimitedOrExceedsTotal ? page : 1,
+      limit: !isUnlimitedOrExceedsTotal ? requestedLimit : totalCount,
+      totalPages,
+      hasMore: !isUnlimitedOrExceedsTotal ? (page < totalPages) : false,
+      exportedAt: new Date().toISOString(),
+      data: jobs
+    });
+  } catch (err) {
+    console.error('Error exporting job data:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to export job data: ' + err.message
+    });
+  }
+};
+
+
+
+app.post('/api/v1/export/jobs', verifyApiKey, handleExportAllJobsData);
+app.post('/api/v1/jobs/export', verifyApiKey, handleExportAllJobsData);
+app.get('/api/v1/export/jobs', verifyApiKey, handleExportAllJobsData);
+
+// Dedicated Endpoint: Export Last 36 Hours Jobs & Internships Data (POST & GET)
+const handleExportRecentJobsData = async (req, res) => {
+  try {
+    const hours = parseFloat(req.body?.hours || req.body?.lastHours || req.body?.last_hours || req.query?.hours) || 36;
+
+    const cutoffDate = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const filter = {
+      $or: [
+        { postedDate: { $gte: cutoffDate } },
+        { createdAt: { $gte: cutoffDate } },
+        { scrapedAt: { $gte: cutoffDate } }
+      ]
+    };
+
+    const totalCount = await Job.countDocuments(filter);
+
+    // Parse optional limit and page parameters
+    const page = Math.max(1, parseInt(req.body?.page || req.query?.page) || 1);
+    let limitParam = req.body?.limit !== undefined ? req.body.limit : req.query?.limit;
+
+    let hasExplicitLimit = limitParam !== undefined && limitParam !== null && limitParam !== '' && limitParam !== 0 && limitParam !== '0' && limitParam !== 'all' && limitParam !== 'unlimited';
+    let requestedLimit = hasExplicitLimit ? parseInt(limitParam) : 0;
+
+    let isUnlimitedOrExceedsTotal = !hasExplicitLimit || requestedLimit <= 0 || requestedLimit >= totalCount;
+
+    let query = Job.find(filter).sort({ postedDate: -1 }).lean();
+
+    if (!isUnlimitedOrExceedsTotal) {
+      const skip = (page - 1) * requestedLimit;
+      query = query.skip(skip).limit(requestedLimit);
+    }
+
+    const jobs = await query;
+    const totalPages = !isUnlimitedOrExceedsTotal ? Math.ceil(totalCount / requestedLimit) : 1;
+
+    res.json({
+      success: true,
+      timeHorizon: `Last ${hours} Hours`,
+      cutoffDate: cutoffDate.toISOString(),
+      totalCount,
+      page: !isUnlimitedOrExceedsTotal ? page : 1,
+      limit: !isUnlimitedOrExceedsTotal ? requestedLimit : totalCount,
+      totalPages,
+      hasMore: !isUnlimitedOrExceedsTotal ? (page < totalPages) : false,
+      exportedAt: new Date().toISOString(),
+      data: jobs
+    });
+  } catch (err) {
+    console.error('Error exporting recent job data:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to export recent job data: ' + err.message
+    });
+  }
+};
+
+app.post('/api/v1/export/jobs/recent', verifyApiKey, handleExportRecentJobsData);
+app.post('/api/v1/export/jobs/last36hours', verifyApiKey, handleExportRecentJobsData);
+app.get('/api/v1/export/jobs/recent', verifyApiKey, handleExportRecentJobsData);
+
+
 
 // 2. Categories & Industry Aggregation API
 app.get('/api/jobs/categories', async (req, res) => {
@@ -614,20 +822,8 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
-// 8. Single Job Detail API
-app.get('/api/jobs/:id', async (req, res) => {
-  try {
-    const job = await Job.findOne({ $or: [{ _id: req.params.id }, { jobId: req.params.id }] });
-    if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
-    res.json(job);
-  } catch (err) {
-    res.status(500).json({ error: 'Error fetching job detail' });
-  }
-});
-
-// 9. Analytics Aggregation API
+// 8. Analytics Aggregation API
+// NOTE: must stay ABOVE '/api/jobs/:id', otherwise ':id' matches 'analytics' first.
 app.get('/api/jobs/analytics', async (req, res) => {
   try {
     const totalJobs = await Job.countDocuments();
@@ -664,6 +860,19 @@ app.get('/api/jobs/analytics', async (req, res) => {
   } catch (err) {
     console.error('Analytics aggregation error:', err);
     res.status(500).json({ error: 'Failed to compute analytics' });
+  }
+});
+
+// 9. Single Job Detail API (keep LAST of the /api/jobs/* routes - ':id' is a catch-all)
+app.get('/api/jobs/:id', async (req, res) => {
+  try {
+    const job = await Job.findOne({ $or: [{ _id: req.params.id }, { jobId: req.params.id }] });
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching job detail' });
   }
 });
 
